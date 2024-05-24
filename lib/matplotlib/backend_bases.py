@@ -2462,9 +2462,13 @@ def key_press_handler(event, canvas=None, toolbar=None):
         elif event.key in rcParams['keymap.pan']:
             toolbar.pan()
             toolbar._update_cursor(event)
-        # zoom mnemonic (default key 'o')
+        # TODO our feature - tratar de default key
         elif event.key in rcParams['keymap.zoom']:
             toolbar.zoom()
+            toolbar._update_cursor(event)
+        # zoom mnemonic (default key 'o')
+        elif event.key in rcParams['keymap.duplicate']:
+            toolbar.duplicate()
             toolbar._update_cursor(event)
         # saving current figure (default key 's')
         elif event.key in rcParams['keymap.save']:
@@ -2788,6 +2792,7 @@ class _Mode(str, Enum):
     NONE = ""
     PAN = "pan/zoom"
     ZOOM = "zoom rect"
+    DUPLICATE = "duplicate"
 
     def __str__(self):
         return self.value
@@ -2847,6 +2852,7 @@ class NavigationToolbar2:
          'move', 'pan'),
         ('Zoom', 'Zoom to rectangle\nx/y fixes axis', 'zoom_to_rect', 'zoom'),
         ('Subplots', 'Configure subplots', 'subplots', 'configure_subplots'),
+        ('Duplicate', 'Duplicate plot', 'zoom_to_rect', 'duplicate'), # TODO our feature - make_icons.py
         (None, None, None, None),
         ('Save', 'Save the figure', 'filesave', 'save_figure'),
       )
@@ -2858,14 +2864,17 @@ class NavigationToolbar2:
         # This cursor will be set after the initial draw.
         self._last_cursor = tools.Cursors.POINTER
 
+        # TODO our feature - mudei de _zoom_pan_handler para _zoom_pan_duplicate_handler. Acrescentei self._duplicate_info = None
+
         self._id_press = self.canvas.mpl_connect(
-            'button_press_event', self._zoom_pan_handler)
+            'button_press_event', self._zoom_pan_duplicate_handler)
         self._id_release = self.canvas.mpl_connect(
-            'button_release_event', self._zoom_pan_handler)
+            'button_release_event', self._zoom_pan_duplicate_handler)
         self._id_drag = self.canvas.mpl_connect(
             'motion_notify_event', self.mouse_move)
         self._pan_info = None
         self._zoom_info = None
+        self._duplicate_info = None
 
         self.mode = _Mode.NONE  # a mode string for the status bar
         self.set_history_buttons()
@@ -2932,6 +2941,12 @@ class NavigationToolbar2:
                   and self._last_cursor != tools.Cursors.MOVE):
                 self.canvas.set_cursor(tools.Cursors.MOVE)
                 self._last_cursor = tools.Cursors.MOVE
+
+            # TODO our feature
+            elif (self.mode == _Mode.DUPLICATE):
+                self.canvas.set_cursor(tools.Cursors.SELECT_REGION)
+                self._last_cursor = tools.Cursors.SELECT_REGION
+
         elif self._last_cursor != tools.Cursors.POINTER:
             self.canvas.set_cursor(tools.Cursors.POINTER)
             self._last_cursor = tools.Cursors.POINTER
@@ -2984,7 +2999,7 @@ class NavigationToolbar2:
         self._update_cursor(event)
         self.set_message(self._mouse_event_to_message(event))
 
-    def _zoom_pan_handler(self, event):
+    def _zoom_pan_duplicate_handler(self, event):
         if self.mode == _Mode.PAN:
             if event.name == "button_press_event":
                 self.press_pan(event)
@@ -2995,6 +3010,13 @@ class NavigationToolbar2:
                 self.press_zoom(event)
             elif event.name == "button_release_event":
                 self.release_zoom(event)
+
+        # TODO our feature
+        if self.mode == _Mode.DUPLICATE:
+            if event.name == "button_press_event":
+                self.press_duplicate(event)
+            elif event.name == "button_release_event":
+                self.release_duplicate(event)
 
     def _start_event_axes_interaction(self, event, *, method):
 
@@ -3123,7 +3145,7 @@ class NavigationToolbar2:
             self.canvas.widgetlock(self)
         for a in self.canvas.figure.get_axes():
             a.set_navigate_mode(self.mode._navigate_mode)
-
+        
     _ZoomInfo = namedtuple("_ZoomInfo", "direction start_xy axes cid cbar")
 
     def press_zoom(self, event):
@@ -3211,6 +3233,30 @@ class NavigationToolbar2:
         self.canvas.draw_idle()
         self._zoom_info = None
         self.push_current()
+
+    def duplicate(self, *args):
+        if self.mode == _Mode.DUPLICATE:
+            self.mode = _Mode.NONE
+            self.canvas.widgetlock.release(self)
+        else:
+            self.mode = _Mode.DUPLICATE
+            self.canvas.widgetlock(self)
+
+        for a in self.canvas.figure.get_axes():
+            a.set_navigate_mode(self.mode._navigate_mode)
+        # TODO our feature
+        return
+    
+    # TODO our feature
+    _DuplicateInfo = namedtuple("_DuplicateInfo", "nao sei o que por aqui")
+    
+    def press_duplicate(self, event):
+        # TODO our feature
+        return
+    
+    def release_duplicate(self, event):
+        # TODO our feature
+        return
 
     def push_current(self):
         """Push the current view limits and position onto the stack."""
