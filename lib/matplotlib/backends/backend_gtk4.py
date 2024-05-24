@@ -302,8 +302,8 @@ class NavigationToolbar2GTK4(_NavigationToolbar2GTK, Gtk.Box):
                 Gio.Icon.new_for_string(
                     str(cbook._get_data_path('images',
                                              f'{image_file}-symbolic.svg'))))
-            self._gtk_ids[text] = button = (
-                Gtk.ToggleButton() if callback in ['zoom', 'pan'] else
+            self._gtk_ids[text] = button = ( # TODO our feature - toggle
+                Gtk.ToggleButton() if callback in ['zoom', 'pan', 'duplicate', 'zoomAside'] else
                 Gtk.Button())
             button.set_child(image)
             button.add_css_class('flat')

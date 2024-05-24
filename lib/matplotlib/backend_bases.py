@@ -2469,13 +2469,18 @@ def key_press_handler(event, canvas=None, toolbar=None):
         elif event.key in rcParams['keymap.pan']:
             toolbar.pan()
             toolbar._update_cursor(event)
-        # TODO our feature - tratar de default key
+        # zoom mnemonic (default key 'o')
         elif event.key in rcParams['keymap.zoom']:
             toolbar.zoom()
             toolbar._update_cursor(event)
-        # zoom mnemonic (default key 'o')
+        # TODO our feature - tratar de default key
+        # duplicate mnemonic (default key 'd')
         elif event.key in rcParams['keymap.duplicate']:
             toolbar.duplicate()
+            toolbar._update_cursor(event)
+        # zoom Aside mnemonic (default key 'O')
+        elif event.key in rcParams['keymap.zoomAside']:
+            toolbar.zoomAside()
             toolbar._update_cursor(event)
         # saving current figure (default key 's')
         elif event.key in rcParams['keymap.save']:
@@ -2799,6 +2804,7 @@ class _Mode(str, Enum):
     NONE = ""
     PAN = "pan/zoom"
     ZOOM = "zoom rect"
+    ZOOMASIDE = "zoomAside"
     DUPLICATE = "duplicate"
 
     def __str__(self):
@@ -2858,8 +2864,9 @@ class NavigationToolbar2:
          'x/y fixes axis, CTRL fixes aspect',
          'move', 'pan'),
         ('Zoom', 'Zoom to rectangle\nx/y fixes axis', 'zoom_to_rect', 'zoom'),
+        ('Zoom Aside', 'Zoom Aside to rectangle\nx/y fixes axis', 'zoomAside', 'zoomAside'),
         ('Subplots', 'Configure subplots', 'subplots', 'configure_subplots'),
-        ('Duplicate', 'Duplicate plot', 'zoom_to_rect', 'duplicate'), # TODO our feature - make_icons.py
+        ('Duplicate', 'Duplicate plot', 'duplicate', 'duplicate'), # TODO our feature - make_icons.py
         (None, None, None, None),
         ('Save', 'Save the figure', 'filesave', 'save_figure'),
       )
@@ -2882,7 +2889,6 @@ class NavigationToolbar2:
         self._pan_info = None
         self._zoom_info = None
         self._duplicate_info = None
-
         self.mode = _Mode.NONE  # a mode string for the status bar
         self.set_history_buttons()
 
@@ -2953,6 +2959,9 @@ class NavigationToolbar2:
             elif (self.mode == _Mode.DUPLICATE):
                 self.canvas.set_cursor(tools.Cursors.SELECT_REGION)
                 self._last_cursor = tools.Cursors.SELECT_REGION
+            elif (self.mode == _Mode.ZOOMASIDE):
+                self.canvas.set_cursor(tools.Cursors.SELECT_REGION)
+                self._last_cursor = tools.Cursors.SELECT_REGION
 
         elif self._last_cursor != tools.Cursors.POINTER:
             self.canvas.set_cursor(tools.Cursors.POINTER)
@@ -3017,7 +3026,11 @@ class NavigationToolbar2:
                 self.press_zoom(event)
             elif event.name == "button_release_event":
                 self.release_zoom(event)
-
+        if self.mode == _Mode.ZOOMASIDE:
+            if event.name == "button_press_event":
+                self.press_zoom(event)
+            elif event.name == "button_release_event":
+                self.release_zoomAside(event)
         # TODO our feature
         if self.mode == _Mode.DUPLICATE:
             if event.name == "button_press_event":
@@ -3155,6 +3168,20 @@ class NavigationToolbar2:
         
     _ZoomInfo = namedtuple("_ZoomInfo", "direction start_xy axes cid cbar")
 
+    def zoomAside(self, *args):
+        if not self.canvas.widgetlock.available(self):
+            self.set_message("zoom Aside unavailable")
+            return
+        """Toggle zoom Aside to rect mode."""
+        if self.mode == _Mode.ZOOMASIDE:
+            self.mode = _Mode.NONE
+            self.canvas.widgetlock.release(self)
+        else:
+            self.mode = _Mode.ZOOMASIDE
+            self.canvas.widgetlock(self)
+        for a in self.canvas.figure.get_axes():
+            a.set_navigate_mode(self.mode._navigate_mode)
+
     def press_zoom(self, event):
         """Callback for mouse button press in zoom to rect mode."""
         if (event.button not in [MouseButton.LEFT, MouseButton.RIGHT]
@@ -3241,7 +3268,59 @@ class NavigationToolbar2:
         self._zoom_info = None
         self.push_current()
 
+    def release_zoomAside(self, event):
+        """Callback for mouse button release in zoom to rect mode."""
+        if self._zoom_info is None:
+            return
+
+        # We don't check the event button here, so that zooms can be cancelled
+        # by (pressing and) releasing another mouse button.
+        self.canvas.mpl_disconnect(self._zoom_info.cid)
+        self.remove_rubberband()
+
+        start_x, start_y = self._zoom_info.start_xy
+        key = event.key
+        # Force the key on colorbars to ignore the zoom-cancel on the
+        # short-axis side
+        if self._zoom_info.cbar == "horizontal":
+            key = "x"
+        elif self._zoom_info.cbar == "vertical":
+            key = "y"
+        # Ignore single clicks: 5 pixels is a threshold that allows the user to
+        # "cancel" a zoom action by zooming by less than 5 pixels.
+        if ((abs(event.x - start_x) < 5 and key != "y") or
+                (abs(event.y - start_y) < 5 and key != "x")):
+            self.canvas.draw_idle()
+            self._zoom_info = None
+            return
+
+        _zoom_aside_axes = []
+        for i, old in enumerate(self._zoom_info.axes):
+            zoomed = old.copy()
+            # Detect whether this Axes is twinned with an earlier Axes in the
+            # list of zoomed Axes, to avoid double zooming.
+            twinx = any(old.get_shared_x_axes().joined(old, prev)
+                        for prev in self._zoom_info.axes[:i])
+            twiny = any(old.get_shared_y_axes().joined(old, prev)
+                        for prev in self._zoom_info.axes[:i])
+            zoomed._set_view_from_bbox(
+                (start_x, start_y, event.x, event.y),
+                self._zoom_info.direction, key, twinx, twiny)
+            _zoom_aside_axes.append(zoomed.copy())
+
+        self.canvas.figure.duplicate(_zoom_aside_axes)
+        self.canvas.draw_idle()
+        for ax in self._zoom_info.axes:
+            ax.set_navigate_mode(None)
+        for ax in _zoom_aside_axes:
+            ax.set_navigate_mode(None)
+        self._zoom_info = None
+        self.push_current()
+
     def duplicate(self, *args):
+        if not self.canvas.widgetlock.available(self):
+            self.set_message("duplicate unavailable")
+            return
         if self.mode == _Mode.DUPLICATE:
             self.mode = _Mode.NONE
             self.canvas.widgetlock.release(self)
@@ -3255,14 +3334,38 @@ class NavigationToolbar2:
         return
     
     # TODO our feature
-    _DuplicateInfo = namedtuple("_DuplicateInfo", "nao sei o que por aqui")
+    _DuplicateInfo = namedtuple("_DuplicateInfo", "axes")
     
     def press_duplicate(self, event):
         # TODO our feature
+        """Callback for mouse button press in duplicate mode."""
+        if (event.button not in [MouseButton.LEFT, MouseButton.RIGHT]
+                or event.x is None or event.y is None):
+            return
+        
+        axes = self._start_event_axes_interaction(event, method="duplicate")
+        if not axes:
+            return
+        
+        self._duplicate_info = self._DuplicateInfo(axes=axes)
         return
     
     def release_duplicate(self, event):
         # TODO our feature
+        """Callback for mouse button press in duplicate mode."""
+        if (event.button not in [MouseButton.LEFT, MouseButton.RIGHT]
+                or event.x is None or event.y is None):
+            return
+        
+        if self._duplicate_info is None:
+            return
+
+        self.canvas.figure.duplicate(self._duplicate_info.axes)
+        self.canvas.draw_idle()
+        for ax in self._duplicate_info.axes:
+            ax.set_navigate_mode(None)
+        self._duplicate_info = None
+        self.push_current()
         return
 
     def push_current(self):

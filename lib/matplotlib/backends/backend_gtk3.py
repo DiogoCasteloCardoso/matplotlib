@@ -303,8 +303,8 @@ class NavigationToolbar2GTK3(_NavigationToolbar2GTK, Gtk.Toolbar):
                     str(cbook._get_data_path('images',
                                              f'{image_file}-symbolic.svg'))),
                 Gtk.IconSize.LARGE_TOOLBAR)
-            self._gtk_ids[text] = button = (
-                Gtk.ToggleToolButton() if callback in ['zoom', 'pan'] else
+            self._gtk_ids[text] = button = (  # TODO our feature - toggle
+                Gtk.ToggleToolButton() if callback in ['zoom', 'pan', 'duplicate', 'zoomAside'] else
                 Gtk.ToolButton())
             button.set_label(text)
             button.set_icon_widget(image)
