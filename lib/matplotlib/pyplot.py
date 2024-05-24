@@ -90,6 +90,9 @@ if TYPE_CHECKING:
     import PIL.Image
     from numpy.typing import ArrayLike
 
+    import matplotlib.axes
+    import matplotlib.artist
+    import matplotlib.backend_bases
     from matplotlib.axis import Tick
     from matplotlib.axes._base import _AxesBase
     from matplotlib.backend_bases import RendererBase, Event
@@ -295,11 +298,16 @@ def install_repl_displayhook() -> None:
     ip.events.register("post_execute", _draw_all_if_interactive)
     _REPL_DISPLAYHOOK = _ReplDisplayHook.IPYTHON
 
-    from IPython.core.pylabtools import backend2gui
-    # trigger IPython's eventloop integration, if available
-    ipython_gui_name = backend2gui.get(get_backend())
-    if ipython_gui_name:
-        ip.enable_gui(ipython_gui_name)
+    if mod_ipython.version_info[:2] < (8, 24):
+        # Use of backend2gui is not needed for IPython >= 8.24 as that functionality
+        # has been moved to Matplotlib.
+        # This code can be removed when Python 3.12, the latest version supported by
+        # IPython < 8.24, reaches end-of-life in late 2028.
+        from IPython.core.pylabtools import backend2gui
+        # trigger IPython's eventloop integration, if available
+        ipython_gui_name = backend2gui.get(get_backend())
+        if ipython_gui_name:
+            ip.enable_gui(ipython_gui_name)
 
 
 def uninstall_repl_displayhook() -> None:
@@ -402,7 +410,7 @@ def switch_backend(newbackend: str) -> None:
     # have to escape the switch on access logic
     old_backend = dict.__getitem__(rcParams, 'backend')
 
-    module = importlib.import_module(cbook._backend_module_name(newbackend))
+    module = backend_registry.load_backend_module(newbackend)
     canvas_class = module.FigureCanvas
 
     required_framework = canvas_class.required_interactive_framework
@@ -476,6 +484,18 @@ def switch_backend(newbackend: str) -> None:
 
     _log.debug("Loaded backend %s version %s.",
                newbackend, backend_mod.backend_version)
+
+    if newbackend in ("ipympl", "widget"):
+        # ipympl < 0.9.4 expects rcParams["backend"] to be the fully-qualified backend
+        # name "module://ipympl.backend_nbagg" not short names "ipympl" or "widget".
+        import importlib.metadata as im
+        from matplotlib import _parse_to_version_info  # type: ignore[attr-defined]
+        try:
+            module_version = im.version("ipympl")
+            if _parse_to_version_info(module_version) < (0, 9, 4):
+                newbackend = "module://ipympl.backend_nbagg"
+        except im.PackageNotFoundError:
+            pass
 
     rcParams['backend'] = rcParamsDefault['backend'] = newbackend
     _backend_mod = backend_mod
@@ -963,30 +983,42 @@ default: None
     `~matplotlib.rcParams` defines the default values, which can be modified
     in the matplotlibrc file.
     """
+    allnums = get_fignums()
+
     if isinstance(num, FigureBase):
         # type narrowed to `Figure | SubFigure` by combination of input and isinstance
         if num.canvas.manager is None:
             raise ValueError("The passed figure is not managed by pyplot")
+        elif any([figsize, dpi, facecolor, edgecolor, not frameon,
+                  kwargs]) and num.canvas.manager.num in allnums:
+            _api.warn_external(
+                "Ignoring specified arguments in this call "
+                f"because figure with num: {num.canvas.manager.num} already exists")
         _pylab_helpers.Gcf.set_active(num.canvas.manager)
         return num.figure
 
-    allnums = get_fignums()
     next_num = max(allnums) + 1 if allnums else 1
     fig_label = ''
     if num is None:
         num = next_num
-    elif isinstance(num, str):
-        fig_label = num
-        all_labels = get_figlabels()
-        if fig_label not in all_labels:
-            if fig_label == 'all':
-                _api.warn_external("close('all') closes all existing figures.")
-            num = next_num
-        else:
-            inum = all_labels.index(fig_label)
-            num = allnums[inum]
     else:
-        num = int(num)  # crude validation of num argument
+        if any([figsize, dpi, facecolor, edgecolor, not frameon,
+                kwargs]) and num in allnums:
+            _api.warn_external(
+                "Ignoring specified arguments in this call "
+                f"because figure with num: {num} already exists")
+        if isinstance(num, str):
+            fig_label = num
+            all_labels = get_figlabels()
+            if fig_label not in all_labels:
+                if fig_label == 'all':
+                    _api.warn_external("close('all') closes all existing figures.")
+                num = next_num
+            else:
+                inum = all_labels.index(fig_label)
+                num = allnums[inum]
+        else:
+            num = int(num)  # crude validation of num argument
 
     # Type of "num" has narrowed to int, but mypy can't quite see it
     manager = _pylab_helpers.Gcf.get_fig_manager(num)  # type: ignore[arg-type]
@@ -2586,7 +2618,7 @@ def polar(*args, **kwargs) -> list[Line2D]:
 if (rcParams["backend_fallback"]
         and rcParams._get_backend_or_none() in (  # type: ignore[attr-defined]
             set(backend_registry.list_builtin(BackendFilter.INTERACTIVE)) -
-            {'WebAgg', 'nbAgg'})
+            {'webagg', 'nbagg'})
         and cbook._get_running_interactive_framework()):
     rcParams._set("backend", rcsetup._auto_backend_sentinel)
 
@@ -2918,6 +2950,7 @@ def boxplot(
     notch: bool | None = None,
     sym: str | None = None,
     vert: bool | None = None,
+    orientation: Literal["vertical", "horizontal"] = "vertical",
     whis: float | tuple[float, float] | None = None,
     positions: ArrayLike | None = None,
     widths: float | ArrayLike | None = None,
@@ -2950,6 +2983,7 @@ def boxplot(
         notch=notch,
         sym=sym,
         vert=vert,
+        orientation=orientation,
         whis=whis,
         positions=positions,
         widths=widths,
@@ -4142,7 +4176,8 @@ def triplot(*args, **kwargs):
 def violinplot(
     dataset: ArrayLike | Sequence[ArrayLike],
     positions: ArrayLike | None = None,
-    vert: bool = True,
+    vert: bool | None = None,
+    orientation: Literal["vertical", "horizontal"] = "vertical",
     widths: float | ArrayLike = 0.5,
     showmeans: bool = False,
     showextrema: bool = True,
@@ -4161,6 +4196,7 @@ def violinplot(
         dataset,
         positions=positions,
         vert=vert,
+        orientation=orientation,
         widths=widths,
         showmeans=showmeans,
         showextrema=showextrema,

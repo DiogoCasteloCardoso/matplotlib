@@ -44,7 +44,7 @@ def _restore_foreground_window_at_end():
     try:
         yield
     finally:
-        if mpl.rcParams['tk.window_focus']:
+        if foreground and mpl.rcParams['tk.window_focus']:
             _c_internal_utils.Win32_SetForegroundWindow(foreground)
 
 
@@ -1011,9 +1011,8 @@ class ToolbarTk(ToolContainerBase, tk.Frame):
                 toolitem.deselect()
 
     def remove_toolitem(self, name):
-        for toolitem in self._toolitems[name]:
+        for toolitem in self._toolitems.pop(name, []):
             toolitem.pack_forget()
-        del self._toolitems[name]
 
     def set_message(self, s):
         self._message.set(s)
